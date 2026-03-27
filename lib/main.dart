@@ -1,3 +1,6 @@
+import 'dart:math';
+import 'dart:ui';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,11 +8,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:linkedin_translator/providers.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'theme/index.dart';
 import 'components/index.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: '.env');
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const ProviderScope(child: MyApp()));
 }
@@ -37,21 +44,101 @@ class LinkedInTranslatorScreen extends ConsumerStatefulWidget {
 }
 
 class _LinkedInTranslatorScreenState
-    extends ConsumerState<LinkedInTranslatorScreen> {
+    extends ConsumerState<LinkedInTranslatorScreen>
+    with SingleTickerProviderStateMixin {
   final _textController = TextEditingController();
-  String _selectedViewMode = 'Editor'; // 'Editor' or 'Recent'
+  late FocusNode _textFocusNode;
+  bool _textFieldFocused = false;
   String _selectedTone = 'Visionary';
   String _selectedLength = 'Short';
   String _selectedComplexity = 'Low';
   bool _includeHashtags = false;
+  bool _toneChanged = false;
 
   final List<String> _tones = ['Visionary', 'Professional', 'Humblebrag', 'Thought Leader'];
-  final List<String> _recentPosts = [];
+  double _scrollOffset = 0.0;
+  late ScrollController _scrollController;
+
+  late AnimationController _ambientController;
+
+  @override
+  void initState() {
+    super.initState();
+    _textFocusNode = FocusNode()
+      ..addListener(() {
+        if (mounted) {
+          setState(() {
+            _textFieldFocused = _textFocusNode.hasFocus;
+          });
+        }
+      });
+
+    _scrollController = ScrollController()
+      ..addListener(() {
+        if (!mounted) return;
+        final offset = _scrollController.offset;
+        if (_scrollOffset != offset) {
+          setState(() {
+            _scrollOffset = offset;
+          });
+        }
+      });
+
+    _textController.addListener(() {
+      if (mounted) setState(() {});
+    });
+
+    _ambientController = AnimationController(
+      duration: const Duration(seconds: 16),
+      vsync: this,
+    )..repeat();
+  }
 
   @override
   void dispose() {
+    _ambientController.dispose();
+    _scrollController.dispose();
     _textController.dispose();
+    _textFocusNode.dispose();
     super.dispose();
+  }
+
+  Future<bool> _checkAndUpdateRequestCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateTime.now();
+    final dateKey = '${today.year}-${today.month}-${today.day}';
+    final savedDate = prefs.getString('request_date');
+    final requestCount = prefs.getInt('request_count') ?? 0;
+
+    // If it's a new day, reset the counter
+    if (savedDate != dateKey) {
+      await prefs.setString('request_date', dateKey);
+      await prefs.setInt('request_count', 1);
+      return true;
+    }
+
+    // Check if under limit for today
+    if (requestCount < 20) {
+      await prefs.setInt('request_count', requestCount + 1);
+      return true;
+    }
+
+    return false;
+  }
+
+  Future<int> _getRemainingRequests() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateTime.now();
+    final dateKey = '${today.year}-${today.month}-${today.day}';
+    final savedDate = prefs.getString('request_date');
+    final requestCount = prefs.getInt('request_count') ?? 0;
+
+    // If it's a new day, return 20
+    if (savedDate != dateKey) {
+      return 20;
+    }
+
+    return (20 - requestCount).clamp(0, 20);
   }
 
   Future<void> _generatePost() async {
@@ -60,6 +147,19 @@ class _LinkedInTranslatorScreenState
       _showCupertinoAlert('Missing Input', 'Please enter a sentence before generating a post.');
       return;
     }
+
+    // Check rate limit
+    final canProceed = await _checkAndUpdateRequestCount();
+    if (!canProceed) {
+      _showCupertinoAlert(
+        'Daily Limit Reached',
+        'Using it too much, dont you think?. Try again tomorrow!',
+      );
+      return;
+    }
+
+    // Close keyboard
+    FocusScope.of(context).unfocus();
 
     ref.read(isLoadingProvider.notifier).state = true;
     try {
@@ -72,14 +172,16 @@ class _LinkedInTranslatorScreenState
         includeHashtags: _includeHashtags,
       );
       ref.read(linkedInPostProvider.notifier).state = post;
-
-      // Add to recent posts
-      setState(() {
-        _recentPosts.insert(0, post);
-        if (_recentPosts.length > 10) {
-          _recentPosts.removeLast();
-        }
-      });
+      
+      // Scroll to bottom to show output
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (mounted) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeOutCubic,
+        );
+      }
     } finally {
       ref.read(isLoadingProvider.notifier).state = false;
     }
@@ -125,46 +227,243 @@ class _LinkedInTranslatorScreenState
     final isLoading = ref.watch(isLoadingProvider);
 
     return CupertinoPageScaffold(
-      backgroundColor: AppColors.background(context),
-      child: CustomScrollView(
-        slivers: [
-          CupertinoSliverNavigationBar(
-            largeTitle: const Text('LinkedIn Post Crafter'),
-            backgroundColor: AppColors.background(context),
-            border: Border(
-              bottom: BorderSide(
-                color: AppColors.border(context),
-                width: 0.5,
+      backgroundColor: Colors.transparent,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Transform.translate(
+              offset: Offset(0, _scrollOffset * 0.06),
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isDark
+                        ? [Color(0xFF101220), Color(0xFF141836)]
+                        : [Color(0xFFEFF4FA), Color(0xFFCFDFF2)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
               ),
             ),
           ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // View Mode Segmented Control
-                  AnimatedCupertinoSegmentedControl<String>(
-                    groupValue: _selectedViewMode,
-                    onValueChanged: (value) {
-                      setState(() => _selectedViewMode = value);
-                      HapticFeedback.selectionClick();
-                    },
-                    children: {
-                      'Editor': const Text('Editor'),
-                      'Recent': const Text('Recent'),
-                    },
-                  ),
-                  const SizedBox(height: 20),
+          Positioned.fill(
+            child: ExcludeSemantics(
+              child: AnimatedBuilder(
+                animation: _ambientController,
+                builder: (context, child) {
+                  final progress = _ambientController.value;
+                  final circle1Offset = Offset(
+                    (sin(progress * 2 * pi) * 140),
+                    (cos(progress * 2 * pi) * 140),
+                  );
+                  final circle2Offset = Offset(
+                    (sin((progress + 0.47) * 2 * pi) * 220),
+                    (cos((progress + 0.47) * 2 * pi) * 100),
+                  );
 
-                  // Conditional UI based on view mode
-                  if (_selectedViewMode == 'Editor') ...[
-                    _buildEditorView(isDark, generatedPost, isLoading),
-                  ] else ...[
-                    _buildRecentView(isDark),
+                  return Stack(
+                  children: [
+                    Transform.translate(
+                      offset: circle1Offset,
+                      child: Center(
+                        child: Container(
+                          width: 280,
+                          height: 280,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: RadialGradient(
+                              colors: [
+                                (isDark ? Color(0xFF4974F5) : Color(0xFF4FA6FF)).withOpacity(0.28),
+                                Colors.transparent,
+                              ],
+                              stops: const [0.0, 0.78],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (isDark
+                                        ? Color(0xFFCDF0FF)
+                                        : Color(0xFFC7E6FF))
+                                    .withOpacity(0.16),
+                                blurRadius: 58,
+                                spreadRadius: 32,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Transform.translate(
+                      offset: Offset(circle2Offset.dx * 0.6, circle2Offset.dy * 0.6),
+                      child: Center(
+                        child: Container(
+                          width: 220,
+                          height: 220,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: RadialGradient(
+                              colors: [
+                                (isDark ? Color(0xFF78D7E6) : Color(0xFF9BD9FF)).withOpacity(0.24),
+                                Colors.transparent,
+                              ],
+                              stops: const [0.0, 0.72],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (isDark
+                                        ? Color(0xFFB4E8FC)
+                                        : Color(0xFFB0DBFF))
+                                    .withOpacity(0.16),
+                                blurRadius: 46,
+                                spreadRadius: 26,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Transform.translate(
+                      offset: Offset(-circle2Offset.dy * 0.5, circle1Offset.dx * 0.3),
+                      child: Center(
+                        child: Container(
+                          width: 180,
+                          height: 180,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: RadialGradient(
+                              colors: [
+                                (isDark ? Color(0xFF84CBFF) : Color(0xFFC0E6FF)).withOpacity(0.2),
+                                Colors.transparent,
+                              ],
+                              stops: const [0.0, 0.65],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (isDark
+                                        ? Color(0xFFB8E5F8)
+                                        : Color(0xFFD1ECFF))
+                                    .withOpacity(0.14),
+                                blurRadius: 40,
+                                spreadRadius: 24,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Transform.translate(
+                      offset: circle2Offset,
+                      child: Center(
+                        child: Container(
+                          width: 160,
+                          height: 160,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: RadialGradient(
+                              colors: [
+                                (isDark ? Color(0xFF78D7E6) : Color(0xFF9BD9FF)).withOpacity(0.12),
+                                Colors.transparent,
+                              ],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (isDark
+                                        ? Color(0xFFB4E8FC)
+                                        : Color(0xFFB0DBFF))
+                                    .withOpacity(0.10),
+                                blurRadius: 38,
+                                spreadRadius: 22,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
-                ],
+                );
+              },
+            ),
+          ),
+    ),
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: Container(color: Colors.transparent),
+            ),
+          ),
+          CustomScrollView(
+            controller: _scrollController,
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+                CupertinoSliverNavigationBar(
+                  largeTitle: RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: 'LinkedIn',
+                          style: GoogleFonts.outfit(
+                            fontSize: 34,
+                            fontWeight: FontWeight.w800,
+                            color: isDark ? Colors.white : Colors.black,
+                            letterSpacing: 0.25,
+                          ),
+                        ),
+                        TextSpan(
+                          text: ' Translator',
+                          style: AppTypography.headline.copyWith(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w400,
+                            color: isDark ? Colors.white : Colors.black,
+                            letterSpacing: 0.25,
+                          )
+                        ),
+                      ],
+                    ),
+                  ),
+                  backgroundColor: Colors.transparent,
+                  border: Border(
+                    bottom: BorderSide(
+                      color: AppColors.border(context),
+                      width: 0.5,
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildEditorView(isDark, generatedPost, isLoading),
+                      ],
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(child: SizedBox(height: _textController.text.isNotEmpty ? 100 : 0)),
+              ],
+            ),
+          // Floating Translate Button
+          Positioned(
+            bottom: 32,
+            right: 24,
+            child: AnimatedOpacity(
+              opacity: _textController.text.isNotEmpty ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: _textController.text.isEmpty,
+                child: AnimatedScale(
+                  scale: _toneChanged ? 1.1 : 1.0,
+                  duration: const Duration(milliseconds: 900),
+                  curve: Curves.elasticOut,
+                  child: AnimatedCupertinoButton(
+                    text: 'Translate',
+                    isLoading: isLoading,
+                    onPressed: _generatePost,
+                    icon: const Icon(LucideIcons.sparkles, color: Colors.white, size: 18),
+                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 28),
+                    backgroundColor: AppColors.primaryBlue,
+                    borderRadius: 14,
+                  ),
+                ),
               ),
             ),
           ),
@@ -192,26 +491,53 @@ class _LinkedInTranslatorScreenState
                 ),
               ),
               const SizedBox(height: 12),
-              CupertinoTextField(
-                controller: _textController,
-                placeholder: 'Tell us your accomplishment...',
-                placeholderStyle: AppTypography.body.copyWith(
-                  color: AppColors.textTertiary(context),
-                ),
-                style: AppTypography.body.copyWith(
-                  color: AppColors.textPrimary(context),
-                ),
-                minLines: 4,
-                maxLines: 6,
-                decoration: BoxDecoration(
-                  color: isDark ? AppColors.darkTertiaryBackground : AppColors.lightBackground,
-                  border: Border.all(
-                    color: AppColors.border(context),
-                    width: 1,
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOutCubic,
+                transform: Matrix4.identity()..scale(_textFieldFocused ? 1.02 : 1.0),
+                transformAlignment: Alignment.topCenter,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  child: CupertinoTextField(
+                    focusNode: _textFocusNode,
+                    controller: _textController,
+                    placeholder: 'I fixed a bug today...',
+                    placeholderStyle: AppTypography.body.copyWith(
+                      color: AppColors.textTertiary(context),
+                    ),
+                    style: AppTypography.body.copyWith(
+                      color: AppColors.textPrimary(context),
+                    ),
+                    minLines: _textController.text.isEmpty ? 2 : 4,
+                    maxLines: 6,
+                    decoration: BoxDecoration(
+                      color: isDark ? AppColors.darkTertiaryBackground : AppColors.lightBackground,
+                      border: Border.all(
+                        color: _textFieldFocused ? AppColors.primaryBlue : AppColors.border(context),
+                        width: _textFieldFocused ? 2 : 1,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: EdgeInsets.all(_textFieldFocused ? 14 : 12),
+                    suffix: _textController.text.isNotEmpty
+                        ? GestureDetector(
+                            onTap: () {
+                              _textController.clear();
+                              setState(() {});
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 12),
+                              child: Icon(
+                                LucideIcons.x,
+                                color: AppColors.textSecondary(context),
+                                size: 18,
+                              ),
+                            ),
+                          )
+                        : null,
                   ),
-                  borderRadius: BorderRadius.circular(12),
                 ),
-                padding: const EdgeInsets.all(12),
               ),
             ],
           ),
@@ -220,7 +546,11 @@ class _LinkedInTranslatorScreenState
 
         // Tone Selection
         _buildSectionHeader('Tone', LucideIcons.briefcase),
-        const SizedBox(height: 10),
+        AnimatedContainer(
+          height: _topToneHeight,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOutCubic,
+        ),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -229,12 +559,31 @@ class _LinkedInTranslatorScreenState
                 (tone) => CupertinoChip(
                   label: tone,
                   selected: _selectedTone == tone,
-                  onSelected: () => setState(() => _selectedTone = tone),
+                  onSelected: () {
+                    setState(() {
+                      _selectedTone = tone;
+                      _toneChanged = true;
+                    });
+                    Future.delayed(const Duration(milliseconds: 300), () {
+                      if (mounted) {
+                        setState(() => _toneChanged = false);
+                      }
+                    });
+                  },
                 ),
               )
               .toList(),
         ),
-        const SizedBox(height: 20),
+        AnimatedContainer(
+          height: _bottomToneHeight,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOutCubic,
+        ),
+        AnimatedContainer(
+          height: _pushPullAboveLength,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOutCubic,
+        ),
 
         // Length Segmented Control
         _buildSectionHeader('Post Length', LucideIcons.trendingUp),
@@ -252,13 +601,40 @@ class _LinkedInTranslatorScreenState
         // Complexity Segmented Control
         _buildSectionHeader('Complexity', LucideIcons.award),
         const SizedBox(height: 10),
-        AnimatedCupertinoSegmentedControl<String>(
-          groupValue: _selectedComplexity,
-          onValueChanged: (value) => setState(() => _selectedComplexity = value),
-          children: {
-            'Low': const Text('Accessible'),
-            'High': const Text('Advanced'),
-          },
+        Stack(
+          children: [
+            AnimatedCupertinoSegmentedControl<String>(
+              groupValue: _selectedComplexity,
+              onValueChanged: (value) => setState(() => _selectedComplexity = value),
+              children: {
+                'Low': const Text('Accessible'),
+                'High': const Text('Advanced'),
+              },
+            ),
+            if (_selectedComplexity == 'High')
+              Positioned(
+                right: 50,
+                top: -18,
+                child: AnimatedOpacity(
+                  opacity: 1.0,
+                  duration: const Duration(milliseconds: 300),
+                  onEnd: () {
+                    if (mounted && _selectedComplexity == 'High') {
+                      Future.delayed(const Duration(milliseconds: 1500), () {
+                        if (mounted) setState(() {});
+                      });
+                    }
+                  },
+                  child: Text(
+                    'too much bro',
+                    style: AppTypography.footnote.copyWith(
+                      color: AppColors.accentOrange.withValues(alpha: 0.7),
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
         const SizedBox(height: 20),
 
@@ -292,16 +668,6 @@ class _LinkedInTranslatorScreenState
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 24),
-
-        // Generate Button
-        AnimatedCupertinoButton(
-          text: 'Generate Post',
-          isLoading: isLoading,
-          onPressed: _generatePost,
-          icon: const Icon(LucideIcons.sparkles, color: Colors.white),
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
         ),
         const SizedBox(height: 20),
 
@@ -340,75 +706,50 @@ class _LinkedInTranslatorScreenState
     );
   }
 
-  Widget _buildRecentView(bool isDark) {
-    if (_recentPosts.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 40),
-          child: Column(
-            children: [
-              Icon(
-                LucideIcons.history,
-                size: 48,
-                color: AppColors.textTertiary(context),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'No Recent Posts',
-                style: AppTypography.headline.copyWith(
-                  color: AppColors.textPrimary(context),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Generate some posts to see them here',
-                style: AppTypography.body.copyWith(
-                  color: AppColors.textSecondary(context),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+  double get _topToneHeight {
+    switch (_selectedTone) {
+      case 'Visionary':
+        return 8;
+      case 'Professional':
+        return 12;
+      case 'Humblebrag':
+        return 16;
+      case 'Thought Leader':
+        return 14;
+      default:
+        return 10;
     }
+  }
 
-    return ListView.separated(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: _recentPosts.length,
-      separatorBuilder: (context, index) => const SizedBox(height: 12),
-      itemBuilder: (context, index) {
-        final post = _recentPosts[index];
-        return CupertinoCard(
-          backgroundColor: AppColors.secondaryBackground(context),
-          onTap: () => _copyToClipboard(post),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              MarkdownBody(
-                data: post.length > 200 ? '${post.substring(0, 200)}...' : post,
-                styleSheet: MarkdownStyleSheet(
-                  p: AppTypography.body.copyWith(
-                    color: AppColors.textPrimary(context),
-                  ),
-                  em: AppTypography.body.copyWith(
-                    color: AppColors.textSecondary(context),
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Tap to copy',
-                style: AppTypography.caption2.copyWith(
-                  color: AppColors.textTertiary(context),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+  double get _bottomToneHeight {
+    switch (_selectedTone) {
+      case 'Visionary':
+        return 16;
+      case 'Professional':
+        return 12;
+      case 'Humblebrag':
+        return 8;
+      case 'Thought Leader':
+        return 10;
+      default:
+        return 12;
+    }
+  }
+
+  double get _pushPullAboveLength {
+    // Inverse of bottom tone height for push/pull effect
+    switch (_selectedTone) {
+      case 'Visionary':
+        return 8;
+      case 'Professional':
+        return 12;
+      case 'Humblebrag':
+        return 16;
+      case 'Thought Leader':
+        return 14;
+      default:
+        return 12;
+    }
   }
 
   Widget _buildSectionHeader(String title, IconData icon) {
@@ -432,11 +773,25 @@ class _LinkedInTranslatorScreenState
   }
 
   Widget _buildOutputCard(String post) {
-    return CupertinoCard(
-      backgroundColor: AppColors.secondaryBackground(context),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return ScaleTransition(
+      scale: Tween<double>(begin: 0.8, end: 1.0).animate(
+        CurvedAnimation(
+          parent: AlwaysStoppedAnimation(1.0),
+          curve: Curves.elasticOut,
+        ),
+      ),
+      child: SlideTransition(
+        position: Tween<Offset>(begin: const Offset(0, 0.15), end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: AlwaysStoppedAnimation(1.0),
+            curve: Curves.easeOutCubic,
+          ),
+        ),
+        child: CupertinoCard(
+          backgroundColor: AppColors.secondaryBackground(context),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -485,23 +840,39 @@ class _LinkedInTranslatorScreenState
           ),
           const SizedBox(height: 12),
           Text(
-            'Generated by LinkedIn Post Crafter',
+            'Generated by LinkedIn Translator',
             style: AppTypography.caption2.copyWith(
               color: AppColors.textTertiary(context),
             ),
           ),
         ],
-      ),
-    );
-  }
+              ),
+            ),
+          ),
+        );
+      }
 
-  Widget _buildEmptyState() {
-    return CupertinoCard(
-      backgroundColor: AppColors.secondaryBackground(context),
-      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
+      Widget _buildEmptyState() {
+        return ScaleTransition(
+          scale: Tween<double>(begin: 0.9, end: 1.0).animate(
+            CurvedAnimation(
+              parent: AlwaysStoppedAnimation(1.0),
+              curve: Curves.easeOutCubic,
+            ),
+          ),
+          child: SlideTransition(
+            position: Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero).animate(
+              CurvedAnimation(
+                parent: AlwaysStoppedAnimation(1.0),
+                curve: Curves.easeOutCubic,
+              ),
+            ),
+            child: CupertinoCard(
+              backgroundColor: AppColors.secondaryBackground(context),
+              padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
           Icon(
             LucideIcons.sparkles,
             size: 48,
@@ -524,8 +895,10 @@ class _LinkedInTranslatorScreenState
               height: 1.5,
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
+                ],
+              ),
+            ),
+          ),
+        );
+      }
+    }

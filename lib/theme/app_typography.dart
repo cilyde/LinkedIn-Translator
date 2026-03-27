@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
-/// Typography scale following iOS Human Interface Guidelines
+/// Typography scale with elegant serif fonts
 class AppTypography {
-  // Font Family
-  static const String fontFamily = '.SF Pro Display';
-
   // Large Title: 34pt, bold, line height 41pt
-  static const TextStyle largeTitle = TextStyle(
+  static final TextStyle largeTitle = GoogleFonts.playfairDisplay(
     fontSize: 34,
     fontWeight: FontWeight.bold,
     height: 1.206,
@@ -14,7 +12,7 @@ class AppTypography {
   );
 
   // Title 1: 28pt, bold, line height 34pt
-  static const TextStyle title1 = TextStyle(
+  static final TextStyle title1 = GoogleFonts.playfairDisplay(
     fontSize: 28,
     fontWeight: FontWeight.bold,
     height: 1.214,
@@ -22,7 +20,7 @@ class AppTypography {
   );
 
   // Title 2: 22pt, bold, line height 28pt
-  static const TextStyle title2 = TextStyle(
+  static final TextStyle title2 = GoogleFonts.playfairDisplay(
     fontSize: 22,
     fontWeight: FontWeight.bold,
     height: 1.273,
@@ -30,7 +28,7 @@ class AppTypography {
   );
 
   // Title 3: 20pt, semibold, line height 24pt
-  static const TextStyle title3 = TextStyle(
+  static final TextStyle title3 = GoogleFonts.playfairDisplay(
     fontSize: 20,
     fontWeight: FontWeight.w600,
     height: 1.2,
@@ -38,7 +36,7 @@ class AppTypography {
   );
 
   // Headline: 17pt, semibold, line height 22pt
-  static const TextStyle headline = TextStyle(
+  static final TextStyle headline = GoogleFonts.playfairDisplay(
     fontSize: 17,
     fontWeight: FontWeight.w600,
     height: 1.294,
@@ -46,7 +44,7 @@ class AppTypography {
   );
 
   // Body: 17pt, regular, line height 22pt
-  static const TextStyle body = TextStyle(
+  static final TextStyle body = GoogleFonts.lora(
     fontSize: 17,
     fontWeight: FontWeight.w400,
     height: 1.294,
@@ -54,7 +52,7 @@ class AppTypography {
   );
 
   // Callout: 16pt, regular, line height 21pt
-  static const TextStyle callout = TextStyle(
+  static final TextStyle callout = GoogleFonts.lora(
     fontSize: 16,
     fontWeight: FontWeight.w400,
     height: 1.3125,
@@ -62,7 +60,7 @@ class AppTypography {
   );
 
   // Subheadline: 15pt, regular, line height 20pt
-  static const TextStyle subheadline = TextStyle(
+  static final TextStyle subheadline = GoogleFonts.lora(
     fontSize: 15,
     fontWeight: FontWeight.w400,
     height: 1.333,
@@ -70,7 +68,7 @@ class AppTypography {
   );
 
   // Footnote: 13pt, regular, line height 18pt
-  static const TextStyle footnote = TextStyle(
+  static final TextStyle footnote = GoogleFonts.lora(
     fontSize: 13,
     fontWeight: FontWeight.w400,
     height: 1.385,
@@ -78,7 +76,7 @@ class AppTypography {
   );
 
   // Caption 1: 12pt, regular, line height 16pt
-  static const TextStyle caption1 = TextStyle(
+  static final TextStyle caption1 = GoogleFonts.lora(
     fontSize: 12,
     fontWeight: FontWeight.w400,
     height: 1.333,
@@ -86,7 +84,7 @@ class AppTypography {
   );
 
   // Caption 2: 11pt, regular, line height 13pt
-  static const TextStyle caption2 = TextStyle(
+  static final TextStyle caption2 = GoogleFonts.lora(
     fontSize: 11,
     fontWeight: FontWeight.w400,
     height: 1.182,

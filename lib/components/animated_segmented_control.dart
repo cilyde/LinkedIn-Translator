@@ -4,7 +4,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
 
 /// Animated Cupertino Segmented Control
-/// Features: Spring-based sliding animation, haptic feedback, tap scaling
+/// Features: Spring-based sliding animation, haptic feedback, tap scaling, swiping support.
 class AnimatedCupertinoSegmentedControl<T> extends StatefulWidget {
   final Map<T, Widget> children;
   final T groupValue;
@@ -21,7 +21,7 @@ class AnimatedCupertinoSegmentedControl<T> extends StatefulWidget {
     required this.groupValue,
     required this.onValueChanged,
     this.padding = const EdgeInsets.all(4),
-    this.animationDuration = const Duration(milliseconds: 350),
+    this.animationDuration = const Duration(milliseconds: 580),
     this.enableHaptics = true,
     this.activeColor = AppColors.primaryBlue,
     this.inactiveColor = AppColors.lightSecondaryBackground,
@@ -33,109 +33,179 @@ class AnimatedCupertinoSegmentedControl<T> extends StatefulWidget {
 }
 
 class _AnimatedCupertinoSegmentedControlState<T>
-    extends State<AnimatedCupertinoSegmentedControl<T>>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
+    extends State<AnimatedCupertinoSegmentedControl<T>> {
+  bool _isDragging = false;
+  double _dragDelta = 0.0;
+  int? _pressedIndex;
 
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: widget.animationDuration,
-      vsync: this,
+  void _onSegmentTapDown(int index) {
+    setState(() {
+      _pressedIndex = index;
+    });
+  }
+
+  void _onSegmentTapUpCancel() {
+    setState(() {
+      _pressedIndex = null;
+    });
+  }
+
+  int get _currentIndex {
+    final entries = widget.children.entries.toList();
+    final index = entries.indexWhere(
+      (element) => element.key == widget.groupValue,
     );
-
-    _setupAnimations();
+    return index < 0 ? 0 : index;
   }
 
-  void _setupAnimations() {
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.0)
-        .animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
-  }
-
-  @override
-  void didUpdateWidget(AnimatedCupertinoSegmentedControl<T> oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.groupValue != widget.groupValue) {
-      _controller.forward(from: 0.0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onSegmentTapped(T value) {
-    if (widget.enableHaptics) {
-      HapticFeedback.selectionClick();
-    }
-    _controller.forward(from: 0.0);
+  void _onSegmentTapped(int index, Widget child) {
+    if (widget.enableHaptics) HapticFeedback.selectionClick();
+    final value = widget.children.keys.elementAt(index);
     widget.onValueChanged(value);
+  }
+
+  void _onDragUpdate(DragUpdateDetails details, double segmentWidth) {
+    setState(() {
+      _isDragging = true;
+      _dragDelta += details.delta.dx;
+      if (_dragDelta.abs() > segmentWidth * 0.35) {
+        final direction = _dragDelta.sign.toInt();
+        final nextIndex = (_currentIndex + direction).clamp(
+          0,
+          widget.children.length - 1,
+        );
+        if (nextIndex != _currentIndex) {
+          _onSegmentTapped(
+            nextIndex,
+            widget.children.values.elementAt(nextIndex),
+          );
+        }
+        _dragDelta = 0;
+      }
+    });
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    setState(() {
+      _isDragging = false;
+      _dragDelta = 0;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDark =
-        MediaQuery.of(context).platformBrightness == Brightness.dark;
-    final activeColor = widget.activeColor;
+    final entries = widget.children.entries.toList();
+    final isDark = MediaQuery.of(context).platformBrightness == Brightness.dark;
+    final int selectedIndex = _currentIndex;
 
     return Container(
       padding: widget.padding,
       decoration: BoxDecoration(
-        color: isDark ? AppColors.darkBackground : AppColors.lightGroupedBackground,
-        borderRadius: BorderRadius.circular(12),
+        color: isDark
+            ? AppColors.darkGroupedBackground.withOpacity(0.65)
+            : AppColors.lightGroupedBackground.withOpacity(0.68),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.border(context).withOpacity(0.25),
+          width: 0.7,
+        ),
       ),
-      child: Row(
-        children: widget.children.entries.toList().asMap().entries.map((entry) {
-          final mapEntry = entry.value;
-          final value = mapEntry.key;
-          final child = mapEntry.value;
-          final isSelected = value == widget.groupValue;
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final segmentWidth =
+              (constraints.maxWidth - widget.padding.horizontal) /
+              entries.length;
+          final indicatorWidth = segmentWidth * (_isDragging ? 1.08 : 1.0);
+          final leftPos =
+              (selectedIndex * segmentWidth) +
+              (0.5 * (segmentWidth - indicatorWidth));
 
-          return Expanded(
-            child: GestureDetector(
-              onTap: () => _onSegmentTapped(value),
-              child: ScaleTransition(
-                scale: _scaleAnimation.drive(Tween<double>(
-                  begin: 1.0,
-                  end: isSelected ? 1.02 : 1.0,
-                )),
-                child: AnimatedContainer(
+          return GestureDetector(
+            onHorizontalDragUpdate: (details) =>
+                _onDragUpdate(details, segmentWidth),
+            onHorizontalDragEnd: _onDragEnd,
+            child: Stack(
+              alignment: Alignment.centerLeft,
+              children: [
+                AnimatedPositioned(
                   duration: widget.animationDuration,
-                  curve: Curves.easeOutCubic,
-                  decoration: BoxDecoration(
-                    color: isSelected ? activeColor : Colors.transparent,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 10,
-                      horizontal: 12,
-                    ),
-                    child: Center(
-                      child: DefaultTextStyle(
-                        style: AppTypography.headline.copyWith(
-                          color: isSelected
-                              ? Colors.white
-                              : (isDark
-                                  ? AppColors.darkTextSecondary
-                                  : AppColors.lightTextSecondary),
-                          fontWeight: isSelected
-                              ? FontWeight.w600
-                              : FontWeight.w500,
+                  curve: Curves.bounceOut,
+                  left: leftPos,
+                  width: indicatorWidth,
+                  height: 38,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: widget.activeColor.withOpacity(0.76),
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.14),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
                         ),
-                        child: child,
+                      ],
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.25),
+                        width: 0.8,
                       ),
                     ),
                   ),
                 ),
-              ),
+                Row(
+                  mainAxisSize: MainAxisSize.max,
+                  children: entries.asMap().entries.map((entry) {
+                    final idx = entry.key;
+                    final child = entry.value.value;
+                    final isSelected = idx == selectedIndex;
+
+                    final isPressed = _pressedIndex == idx;
+                    return Expanded(
+                      child: Material(
+                        type: MaterialType.transparency,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          splashFactory: InkRipple.splashFactory,
+                          splashColor: widget.activeColor.withOpacity(0.35),
+                          highlightColor: widget.activeColor.withOpacity(0.18),
+                          onTap: () => _onSegmentTapped(idx, child),
+                          onTapDown: (_) => _onSegmentTapDown(idx),
+                          onTapUp: (_) => _onSegmentTapUpCancel(),
+                          onTapCancel: _onSegmentTapUpCancel,
+                          child: AnimatedScale(
+                            duration: const Duration(milliseconds: 120),
+                            curve: Curves.easeOutCubic,
+                            scale: isPressed ? 0.94 : 1.0,
+                            child: AnimatedContainer(
+                              duration: widget.animationDuration,
+                              curve: Curves.easeOutCubic,
+                              alignment: Alignment.center,
+                              height: 42,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 10),
+                              child: DefaultTextStyle(
+                                style: AppTypography.headline.copyWith(
+                                  color: isSelected
+                                      ? Colors.white
+                                      : (isDark
+                                          ? AppColors.darkTextSecondary
+                                          : AppColors.lightTextSecondary),
+                                  fontWeight: isSelected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                ),
+                                child: child,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
             ),
           );
-        }).toList(),
+        },
       ),
     );
   }
