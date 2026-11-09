@@ -1,10 +1,9 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:linkedin_translator/providers.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 void main() {
@@ -146,7 +145,9 @@ class _LinkedInTranslatorScreenState
                             decoration: InputDecoration(
                               labelText: 'Your achievement',
                               hintText: 'I fixed a bug...',
-                              labelStyle: const TextStyle(color: Color(0xFF667085)),
+                              labelStyle: const TextStyle(
+                                color: Color(0xFF667085),
+                              ),
                               filled: true,
                               fillColor: Colors.white,
                               border: OutlineInputBorder(
@@ -200,8 +201,8 @@ class _LinkedInTranslatorScreenState
                               child: Center(child: CircularProgressIndicator()),
                             )
                           : (generatedPost != null
-                              ? _buildOutputCard(generatedPost)
-                              : _buildEmptyPlaceholder()),
+                                ? _buildOutputCard(generatedPost)
+                                : _buildEmptyPlaceholder()),
                     ),
                     const Spacer(),
                     Padding(
@@ -349,7 +350,7 @@ class _LinkedInTranslatorScreenState
                   label: const Text('Copy'),
                 ),
               ],
-            )
+            ),
           ],
         ),
       ),
